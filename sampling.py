@@ -457,9 +457,6 @@ def masked_denoise(
 
     masks = [inp["mask"].to(img.device, dtype=img.dtype) for inp in inps]
 
-    input_shape = img.shape
-    mask_shape = masks[0].shape
-
     if hasattr(model, "guidance_in"):
         guidance_vec = torch.full(
             (img.shape[0],), guidance, device=img.device, dtype=img.dtype
@@ -519,11 +516,9 @@ def masked_denoise(
             # neg_pred /= torch.ones_like(x_in) * 1e-37
             # cfg
             masked_pred = neg_pred + true_gs * (masked_pred - neg_pred)
+
         # denoising step
         img = img + (t_prev - t_curr) * masked_pred
-
-        # for ic in range(len(inps)):
-        #     inps[ic]["img"] = img.clone()
 
         if callback is not None:
             unpacked = unpack(img.float(), height, width)
@@ -591,9 +586,6 @@ def masked_denoise_controlnet(
 
     masks = [inp["mask"].to(img.device, dtype=img.dtype) for inp in inps]
 
-    input_shape = img.shape
-    mask_shape = masks[0].shape
-
     for container in controlnets_container:
         container.controlnet_cond = container.controlnet_cond.to(
             img.device, dtype=img.dtype
@@ -616,8 +608,6 @@ def masked_denoise_controlnet(
         guidance_vec = guidance_vec.to(img.device, dtype=img.dtype)
 
         for ic in range(len(inps)):
-            # for ic in (0,):
-            # img = inps[ic]["img"]
             img_ids = inps[ic]["img_ids"]
             txt = inps[ic]["txt"]
             txt_ids = inps[ic]["txt_ids"]
@@ -664,72 +654,66 @@ def masked_denoise_controlnet(
             )
             inps[ic]["img"] = pred
 
-            # Apply mask to the latents
-            masked_pred = torch.zeros_like(img).to(img.device, dtype=img.dtype)
-            counts = (torch.ones_like(img) * 1e-37).to(img.device, dtype=img.dtype)
+        # Apply mask to the latents
+        masked_pred = torch.zeros_like(img).to(img.device, dtype=img.dtype)
+        counts = (torch.ones_like(img) * 1e-37).to(img.device, dtype=img.dtype)
 
-            for ic in range(len(inps)):
-                masked_pred += inps[ic]["img"] * masks[ic]
-                counts += masks[ic]
+        for ic in range(len(inps)):
+            masked_pred += inps[ic]["img"] * masks[ic]
+            counts += masks[ic]
 
-            masked_pred /= counts
+        masked_pred /= counts
 
-            neg_controlnet_hidden_states = None
-            if i >= timestep_to_start_cfg:
-                for container in controlnets_container:
-                    if (
-                        container.controlnet_start_step
-                        <= i
-                        <= container.controlnet_end_step
-                    ):
-                        neg_block_res_samples = container.controlnet(
-                            img=img,
-                            img_ids=img_ids,
-                            controlnet_cond=container.controlnet_cond,
-                            txt=neg_txt,
-                            txt_ids=neg_txt_ids,
-                            y=neg_vec,
-                            timesteps=t_vec,
-                            guidance=guidance_vec,
-                        )
-                        if neg_controlnet_hidden_states is None:
-                            neg_controlnet_hidden_states = [
-                                sample * container.controlnet_gs
-                                for sample in neg_block_res_samples
-                            ]
-                        else:
-                            if len(neg_controlnet_hidden_states) == len(
-                                neg_block_res_samples
-                            ):
-                                for j in range(len(neg_controlnet_hidden_states)):
-                                    neg_controlnet_hidden_states[j] += (
-                                        neg_block_res_samples[j]
-                                        * container.controlnet_gs
-                                    )
+        neg_controlnet_hidden_states = None
+        if i >= timestep_to_start_cfg:
+            for container in controlnets_container:
+                if (
+                    container.controlnet_start_step
+                    <= i
+                    <= container.controlnet_end_step
+                ):
+                    neg_block_res_samples = container.controlnet(
+                        img=img,
+                        img_ids=img_ids,
+                        controlnet_cond=container.controlnet_cond,
+                        txt=neg_txt,
+                        txt_ids=neg_txt_ids,
+                        y=neg_vec,
+                        timesteps=t_vec,
+                        guidance=guidance_vec,
+                    )
+                    if neg_controlnet_hidden_states is None:
+                        neg_controlnet_hidden_states = [
+                            sample * container.controlnet_gs
+                            for sample in neg_block_res_samples
+                        ]
+                    else:
+                        if len(neg_controlnet_hidden_states) == len(
+                            neg_block_res_samples
+                        ):
+                            for j in range(len(neg_controlnet_hidden_states)):
+                                neg_controlnet_hidden_states[j] += (
+                                    neg_block_res_samples[j]
+                                    * container.controlnet_gs
+                                )
 
-                neg_pred = model_forward(
-                    model,
-                    img=img,
-                    img_ids=img_ids,
-                    txt=neg_txt,
-                    txt_ids=neg_txt_ids,
-                    y=neg_vec,
-                    timesteps=t_vec,
-                    guidance=guidance_vec,
-                    block_controlnet_hidden_states=neg_controlnet_hidden_states,
-                    neg_mode=True,
-                )
-                # cfg
-                masked_pred = neg_pred + true_gs * (masked_pred - neg_pred)
+            neg_pred = model_forward(
+                model,
+                img=img,
+                img_ids=img_ids,
+                txt=neg_txt,
+                txt_ids=neg_txt_ids,
+                y=neg_vec,
+                timesteps=t_vec,
+                guidance=guidance_vec,
+                block_controlnet_hidden_states=neg_controlnet_hidden_states,
+                neg_mode=True,
+            )
+            # cfg
+            masked_pred = neg_pred + true_gs * (masked_pred - neg_pred)
 
         # denoising step
         img = img + (t_prev - t_curr) * masked_pred
-
-        # Sanity check
-        # img = inps[0]["img"]
-
-        # for ic in range(len(inps)):
-        #     inps[ic]["img"] = img.clone()
 
         if callback is not None:
             unpacked = unpack(img.float(), height, width)
