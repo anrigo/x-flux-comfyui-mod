@@ -1,50 +1,80 @@
+from einops import rearrange
 from comfy.ldm.flux.layers import DoubleStreamBlock as DSBold
 import copy
 import torch
 from .xflux.src.flux.modules.layers import DoubleStreamBlock as DSBnew
-from .layers import (DoubleStreamBlockLoraProcessor,
-                     DoubleStreamBlockProcessor,
-                     DoubleStreamBlockLorasMixerProcessor,
-                     DoubleStreamMixerProcessor)
+from .layers import (
+    DoubleStreamBlockLoraProcessor,
+    DoubleStreamBlockProcessor,
+    DoubleStreamBlockLorasMixerProcessor,
+    DoubleStreamMixerProcessor,
+)
 
 from comfy.utils import get_attr, set_attr
 
 import numpy as np
 
-def CopyDSB(oldDSB):
 
+def CopyDSB(oldDSB):
     if isinstance(oldDSB, DSBold):
         tyan = copy.copy(oldDSB)
 
-        if hasattr(tyan.img_mlp[0], 'out_features'):
+        if hasattr(tyan.img_mlp[0], "out_features"):
             mlp_hidden_dim = tyan.img_mlp[0].out_features
         else:
             mlp_hidden_dim = 12288
 
         mlp_ratio = mlp_hidden_dim / tyan.hidden_size
-        bi = DSBnew(hidden_size=tyan.hidden_size, num_heads=tyan.num_heads, mlp_ratio=mlp_ratio)
-        #better use __dict__ but I bit scared
+        bi = DSBnew(
+            hidden_size=tyan.hidden_size, num_heads=tyan.num_heads, mlp_ratio=mlp_ratio
+        )
+        # better use __dict__ but I bit scared
         (
-            bi.img_mod, bi.img_norm1, bi.img_attn, bi.img_norm2,
-            bi.img_mlp, bi.txt_mod, bi.txt_norm1, bi.txt_attn, bi.txt_norm2, bi.txt_mlp
+            bi.img_mod,
+            bi.img_norm1,
+            bi.img_attn,
+            bi.img_norm2,
+            bi.img_mlp,
+            bi.txt_mod,
+            bi.txt_norm1,
+            bi.txt_attn,
+            bi.txt_norm2,
+            bi.txt_mlp,
         ) = (
-            tyan.img_mod, tyan.img_norm1, tyan.img_attn, tyan.img_norm2,
-            tyan.img_mlp, tyan.txt_mod, tyan.txt_norm1, tyan.txt_attn, tyan.txt_norm2, tyan.txt_mlp
+            tyan.img_mod,
+            tyan.img_norm1,
+            tyan.img_attn,
+            tyan.img_norm2,
+            tyan.img_mlp,
+            tyan.txt_mod,
+            tyan.txt_norm1,
+            tyan.txt_attn,
+            tyan.txt_norm2,
+            tyan.txt_mlp,
         )
         bi.set_processor(DoubleStreamBlockProcessor())
 
         return bi
     return oldDSB
 
+
 def copy_model(orig, new):
     new = copy.copy(new)
     new.model = copy.copy(orig.model)
     new.model.diffusion_model = copy.copy(orig.model.diffusion_model)
-    new.model.diffusion_model.double_blocks = copy.deepcopy(orig.model.diffusion_model.double_blocks)
+    new.model.diffusion_model.double_blocks = copy.deepcopy(
+        orig.model.diffusion_model.double_blocks
+    )
     count = len(new.model.diffusion_model.double_blocks)
     for i in range(count):
-        new.model.diffusion_model.double_blocks[i] = copy.copy(orig.model.diffusion_model.double_blocks[i])
-        new.model.diffusion_model.double_blocks[i].load_state_dict(orig.model.diffusion_model.double_blocks[0].state_dict())
+        new.model.diffusion_model.double_blocks[i] = copy.copy(
+            orig.model.diffusion_model.double_blocks[i]
+        )
+        new.model.diffusion_model.double_blocks[i].load_state_dict(
+            orig.model.diffusion_model.double_blocks[0].state_dict()
+        )
+
+
 """
 class PbarWrapper:
     def __init__(self):
@@ -71,20 +101,27 @@ class PbarWrapper:
         self.rn+=1
         return 1
 """
+
+
 def FluxUpdateModules(flux_model, pbar=None):
     save_list = {}
-    #print((flux_model.diffusion_model.double_blocks))
-    #for k,v in flux_model.diffusion_model.double_blocks:
-        #if "double" in k:
+    # print((flux_model.diffusion_model.double_blocks))
+    # for k,v in flux_model.diffusion_model.double_blocks:
+    # if "double" in k:
     count = len(flux_model.diffusion_model.double_blocks)
     patches = {}
 
     for i in range(count):
         if pbar is not None:
             pbar.update(1)
-        patches[f"double_blocks.{i}"]=CopyDSB(flux_model.diffusion_model.double_blocks[i])
-        flux_model.diffusion_model.double_blocks[i]=CopyDSB(flux_model.diffusion_model.double_blocks[i])
+        patches[f"double_blocks.{i}"] = CopyDSB(
+            flux_model.diffusion_model.double_blocks[i]
+        )
+        flux_model.diffusion_model.double_blocks[i] = CopyDSB(
+            flux_model.diffusion_model.double_blocks[i]
+        )
     return patches
+
 
 def is_model_pathched(model):
     def test(mod):
@@ -95,9 +132,9 @@ def is_model_pathched(model):
                 if test(p):
                     return True
         return False
+
     result = test(model)
     return result
-
 
 
 def attn_processors(model_flux):
@@ -105,7 +142,6 @@ def attn_processors(model_flux):
     processors = {}
 
     def fn_recursive_add_processors(name: str, module: torch.nn.Module, procs):
-
         if hasattr(module, "set_processor"):
             procs[f"{name}.processor"] = module.processor
         for sub_name, child in module.named_children():
@@ -116,6 +152,8 @@ def attn_processors(model_flux):
     for name, module in model_flux.named_children():
         fn_recursive_add_processors(name, module, processors)
     return processors
+
+
 def merge_loras(lora1, lora2):
     new_block = DoubleStreamMixerProcessor()
     if isinstance(lora1, DoubleStreamMixerProcessor):
@@ -133,6 +171,7 @@ def merge_loras(lora1, lora2):
     else:
         pass
     return new_block
+
 
 def set_attn_processor(model_flux, processor):
     r"""
@@ -160,15 +199,14 @@ def set_attn_processor(model_flux, processor):
                 block = copy.copy(module.get_processor())
                 module.set_processor(copy.deepcopy(module.get_processor()))
                 new_block = DoubleStreamBlockLorasMixerProcessor()
-                #q1, q2, p1, p2, w1 = block.get_loras()
+                # q1, q2, p1, p2, w1 = block.get_loras()
                 new_block.set_loras(*block.get_loras())
                 if not isinstance(processor, dict):
                     new_block.add_lora(processor)
                 else:
-
                     new_block.add_lora(processor.pop(f"{name}.processor"))
                 module.set_processor(new_block)
-                #block = set_attr(module, "", new_block)
+                # block = set_attr(module, "", new_block)
             elif isinstance(module.get_processor(), DoubleStreamBlockLoraProcessor):
                 block = DoubleStreamBlockLorasMixerProcessor()
                 block.add_lora(copy.copy(module.get_processor()))
@@ -189,33 +227,35 @@ def set_attn_processor(model_flux, processor):
     for name, module in model_flux.named_children():
         fn_recursive_attn_processor(name, module, processor)
 
+
 class LATENT_PROCESSOR_COMFY:
     def __init__(self):
         self.scale_factor = 0.3611
         self.shift_factor = 0.1159
-        self.latent_rgb_factors =[
-                    [-0.0404,  0.0159,  0.0609],
-                    [ 0.0043,  0.0298,  0.0850],
-                    [ 0.0328, -0.0749, -0.0503],
-                    [-0.0245,  0.0085,  0.0549],
-                    [ 0.0966,  0.0894,  0.0530],
-                    [ 0.0035,  0.0399,  0.0123],
-                    [ 0.0583,  0.1184,  0.1262],
-                    [-0.0191, -0.0206, -0.0306],
-                    [-0.0324,  0.0055,  0.1001],
-                    [ 0.0955,  0.0659, -0.0545],
-                    [-0.0504,  0.0231, -0.0013],
-                    [ 0.0500, -0.0008, -0.0088],
-                    [ 0.0982,  0.0941,  0.0976],
-                    [-0.1233, -0.0280, -0.0897],
-                    [-0.0005, -0.0530, -0.0020],
-                    [-0.1273, -0.0932, -0.0680]
-                ]
+        self.latent_rgb_factors = [
+            [-0.0404, 0.0159, 0.0609],
+            [0.0043, 0.0298, 0.0850],
+            [0.0328, -0.0749, -0.0503],
+            [-0.0245, 0.0085, 0.0549],
+            [0.0966, 0.0894, 0.0530],
+            [0.0035, 0.0399, 0.0123],
+            [0.0583, 0.1184, 0.1262],
+            [-0.0191, -0.0206, -0.0306],
+            [-0.0324, 0.0055, 0.1001],
+            [0.0955, 0.0659, -0.0545],
+            [-0.0504, 0.0231, -0.0013],
+            [0.0500, -0.0008, -0.0088],
+            [0.0982, 0.0941, 0.0976],
+            [-0.1233, -0.0280, -0.0897],
+            [-0.0005, -0.0530, -0.0020],
+            [-0.1273, -0.0932, -0.0680],
+        ]
+
     def __call__(self, x):
         return (x / self.scale_factor) + self.shift_factor
+
     def go_back(self, x):
         return (x - self.shift_factor) * self.scale_factor
-
 
 
 def check_is_comfy_lora(sd):
@@ -224,54 +264,75 @@ def check_is_comfy_lora(sd):
             return True
     return False
 
+
 def comfy_to_xlabs_lora(sd):
     sd_out = {}
     for k in sd:
         if "diffusion_model" in k:
-            new_k =  (k
-                    .replace(".lora_down.weight", ".down.weight")
-                    .replace(".lora_up.weight", ".up.weight")
-                    .replace(".img_attn.proj.", ".processor.proj_lora1.")
-                    .replace(".txt_attn.proj.", ".processor.proj_lora2.")
-                    .replace(".img_attn.qkv.", ".processor.qkv_lora1.")
-                    .replace(".txt_attn.qkv.", ".processor.qkv_lora2."))
-            new_k = new_k[len("diffusion_model."):]
+            new_k = (
+                k.replace(".lora_down.weight", ".down.weight")
+                .replace(".lora_up.weight", ".up.weight")
+                .replace(".img_attn.proj.", ".processor.proj_lora1.")
+                .replace(".txt_attn.proj.", ".processor.proj_lora2.")
+                .replace(".img_attn.qkv.", ".processor.qkv_lora1.")
+                .replace(".txt_attn.qkv.", ".processor.qkv_lora2.")
+            )
+            new_k = new_k[len("diffusion_model.") :]
         else:
-            new_k=k
+            new_k = k
         sd_out[new_k] = sd[k]
     return sd_out
 
+
 def LinearStrengthModel(start, finish, size):
-    return [
-        (start + (finish - start) * (i / (size - 1))) for i in range(size)
-        ]
+    return [(start + (finish - start) * (i / (size - 1))) for i in range(size)]
+
+
 def FirstHalfStrengthModel(start, finish, size):
-    sizehalf = size//2
-    arr = [
-        (start + (finish - start) * (i / (sizehalf - 1))) for i in range(sizehalf)
-        ]
-    return arr+[finish]*(size-sizehalf)
+    sizehalf = size // 2
+    arr = [(start + (finish - start) * (i / (sizehalf - 1))) for i in range(sizehalf)]
+    return arr + [finish] * (size - sizehalf)
+
+
 def SecondHalfStrengthModel(start, finish, size):
-    sizehalf = size//2
-    arr = [
-        (start + (finish - start) * (i / (sizehalf - 1))) for i in range(sizehalf)
-        ]
-    return [start]*(size-sizehalf)+arr
+    sizehalf = size // 2
+    arr = [(start + (finish - start) * (i / (sizehalf - 1))) for i in range(sizehalf)]
+    return [start] * (size - sizehalf) + arr
+
+
 def SigmoidStrengthModel(start, finish, size):
     def fade_out(x, x1, x2):
         return 1 / (1 + np.exp(-(x - (x1 + x2) / 2) * 8 / (x2 - x1)))
+
     arr = [start + (finish - start) * (fade_out(i, 0, size) - 0.5) for i in range(size)]
     return arr
 
+
 class ControlNetContainer:
     def __init__(
-            self, controlnet, controlnet_cond, 
-            controlnet_gs, controlnet_start_step,
-            controlnet_end_step,
-            
-            ):
+        self,
+        controlnet,
+        controlnet_cond,
+        controlnet_gs,
+        controlnet_start_step,
+        controlnet_end_step,
+    ):
         self.controlnet_cond = controlnet_cond
         self.controlnet_gs = controlnet_gs
         self.controlnet_start_step = controlnet_start_step
         self.controlnet_end_step = controlnet_end_step
         self.controlnet = controlnet
+
+
+def patchify(x: torch.Tensor, patch_size: int = 2) -> torch.Tensor:
+    return rearrange(
+        x, "b c (h ph) (w pw) -> b (h w) (c ph pw)", ph=patch_size, pw=patch_size
+    )
+
+
+def unpatchify(x: torch.Tensor, h: int, w: int, patch_size: int = 2) -> torch.Tensor:
+    h_len = (h + (patch_size // 2)) // patch_size
+    w_len = (w + (patch_size // 2)) // patch_size
+    return rearrange(
+        x, "b (h w) (c ph pw) -> b c (h ph) (w pw)", h=h_len, w=w_len, ph=2, pw=2
+    )[:, :, :h, :w]
