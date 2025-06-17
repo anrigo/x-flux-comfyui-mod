@@ -323,16 +323,16 @@ def denoise_controlnet(
                     timesteps=t_vec,
                     guidance=guidance_vec,
                 )
-            if controlnet_hidden_states is None:
-                controlnet_hidden_states = [
-                    sample * container.controlnet_gs for sample in block_res_samples
-                ]
-            else:
-                if len(controlnet_hidden_states) == len(block_res_samples):
-                    for j in range(len(controlnet_hidden_states)):
-                        controlnet_hidden_states[j] += (
-                            block_res_samples[j] * container.controlnet_gs
-                        )
+                if controlnet_hidden_states is None:
+                    controlnet_hidden_states = [
+                        sample * container.controlnet_gs for sample in block_res_samples
+                    ]
+                else:
+                    if len(controlnet_hidden_states) == len(block_res_samples):
+                        for j in range(len(controlnet_hidden_states)):
+                            controlnet_hidden_states[j] += (
+                                block_res_samples[j] * container.controlnet_gs
+                            )
 
         pred = model_forward(
             model,
@@ -630,16 +630,17 @@ def masked_denoise_controlnet(
                         timesteps=t_vec,
                         guidance=guidance_vec,
                     )
-                if controlnet_hidden_states is None:
-                    controlnet_hidden_states = [
-                        sample * container.controlnet_gs for sample in block_res_samples
-                    ]
-                else:
-                    if len(controlnet_hidden_states) == len(block_res_samples):
-                        for j in range(len(controlnet_hidden_states)):
-                            controlnet_hidden_states[j] += (
-                                block_res_samples[j] * container.controlnet_gs
-                            )
+                    if controlnet_hidden_states is None:
+                        controlnet_hidden_states = [
+                            sample * container.controlnet_gs
+                            for sample in block_res_samples
+                        ]
+                    else:
+                        if len(controlnet_hidden_states) == len(block_res_samples):
+                            for j in range(len(controlnet_hidden_states)):
+                                controlnet_hidden_states[j] += (
+                                    block_res_samples[j] * container.controlnet_gs
+                                )
 
             pred = model_forward(
                 model,
@@ -693,8 +694,7 @@ def masked_denoise_controlnet(
                         ):
                             for j in range(len(neg_controlnet_hidden_states)):
                                 neg_controlnet_hidden_states[j] += (
-                                    neg_block_res_samples[j]
-                                    * container.controlnet_gs
+                                    neg_block_res_samples[j] * container.controlnet_gs
                                 )
 
             neg_pred = model_forward(
