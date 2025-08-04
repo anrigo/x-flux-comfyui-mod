@@ -664,7 +664,6 @@ class XlabsSamplerWithMask:
             "optional": {
                 "latent_image": ("LATENT", {"default": None}),
                 "controlnet_condition": ("ControlNetCondition", {"default": None}),
-                "override_seed": ("INT", {"default": None}),
             },
         }
 
@@ -686,12 +685,7 @@ class XlabsSamplerWithMask:
         denoise_strength,
         latent_image=None,
         controlnet_condition=None,
-        override_seed=None,
     ):
-        if override_seed is not None:
-            print(f"Overriding seed with {override_seed}")
-            noise_seed = override_seed
-
         if "mask" in conditioning[0][1]:
             print("Using masked sampling")
             return self.masked_sampling(
