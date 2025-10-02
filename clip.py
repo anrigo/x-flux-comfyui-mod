@@ -29,6 +29,8 @@ class FluxClipViT:
         self.load_device = next(self.model.parameters()).device
 
     def __call__(self, image):
+        if image.max() > 1.0:
+            image = image / 255.0
         img = self.image_processor(
             images=image, return_tensors="pt"
             )
