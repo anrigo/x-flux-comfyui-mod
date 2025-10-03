@@ -660,6 +660,7 @@ class XlabsSamplerWithMask:
                     "FLOAT",
                     {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01},
                 ),
+                "parallel_bs": ("INT", {"default": 0}),
             },
             "optional": {
                 "latent_image": ("LATENT", {"default": None}),
@@ -683,6 +684,7 @@ class XlabsSamplerWithMask:
         true_gs,
         image_to_image_strength,
         denoise_strength,
+        parallel_bs,
         latent_image=None,
         controlnet_condition=None,
     ):
@@ -698,6 +700,7 @@ class XlabsSamplerWithMask:
                 true_gs,
                 image_to_image_strength,
                 denoise_strength,
+                parallel_bs,
                 latent_image,
                 controlnet_condition,
             )
@@ -876,6 +879,7 @@ class XlabsSamplerWithMask:
         true_gs,
         image_to_image_strength,
         denoise_strength,
+        parallel_bs,
         latent_image,
         controlnet_condition,
     ):
@@ -1071,6 +1075,7 @@ class XlabsSamplerWithMask:
                 height=height,
                 # controlnet_start_step=start_step,
                 # controlnet_end_step=end_step
+                parallel_batch_size=parallel_bs,
             )
 
             # inp_cond = inp_conds[0]
