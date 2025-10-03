@@ -931,24 +931,22 @@ class XlabsSamplerWithMask:
         inmodel.diffusion_model.to(device)
 
         inp_conds = []
-        neg_inp_conds = []
-
-        # breakpoint()
 
         for i in range(len(conditioning)):
-            # for i in (0,):
-
             inp_cond = prepare(
-                conditioning[i][0], conditioning[i][1]["pooled_output"], img=x.clone()
+                conditioning[i][0], conditioning[i][1]["pooled_output"], img=x
             )
 
-            conds = conditioning[i][1]
+            if i != 0:
+                inp_cond["img"] = None
+                inp_cond["img_ids"] = None
+
+            modified = conditioning[i][1]
 
             # Preprocess mask
             dims = x.shape[2:]
-            mask = conds["mask"]
+            mask = modified["mask"]
             mask = mask.to(device=device)
-            modified = conds.copy()
             if len(mask.shape) == len(dims):
                 mask = mask.unsqueeze(0)
 
@@ -972,12 +970,11 @@ class XlabsSamplerWithMask:
             #         modified['area'] = area
 
             modified["mask"] = mask
-            conds = modified
 
             mask_strength = 1.0
-            if "mask_strength" in conds:
-                mask_strength = conds["mask_strength"]
-            mask = conds["mask"]
+            if "mask_strength" in modified:
+                mask_strength = modified["mask_strength"]
+            mask = modified["mask"]
 
             assert mask.shape[1:] == x.shape[2:]
 
@@ -993,9 +990,7 @@ class XlabsSamplerWithMask:
             inp_conds.append(inp_cond)
 
         neg_inp_cond = prepare(
-            neg_conditioning[0][0],
-            neg_conditioning[0][1]["pooled_output"],
-            img=x.clone(),
+            neg_conditioning[0][0], neg_conditioning[0][1]["pooled_output"], img=x
         )
 
         if denoise_strength <= 0.99:

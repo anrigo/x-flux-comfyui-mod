@@ -554,6 +554,7 @@ def masked_denoise_controlnet(
     i = 0
 
     img = inps[0]["img"]
+    img_ids = inps[0]["img_ids"]
 
     if image2image_strength is not None and orig_image is not None:
         t_idx = int((1 - np.clip(image2image_strength, 0.0, 1.0)) * len(timesteps))
@@ -563,23 +564,17 @@ def masked_denoise_controlnet(
             orig_image, "b c (h ph) (w pw) -> b (h w) (c ph pw)", ph=2, pw=2
         ).to(img.device, dtype=img.dtype)
 
-        for ic in range(len(inps)):
-            img = inps[ic]["img"]
-            img = t * img + (1.0 - t) * orig_image
-            inps[ic]["img"] = img
+        img = t * img + (1.0 - t) * orig_image
 
     for ic in range(len(inps)):
-        img_ids = inps[ic]["img_ids"]
         txt = inps[ic]["txt"]
         txt_ids = inps[ic]["txt_ids"]
         vec = inps[ic]["vec"]
 
-        img_ids = img_ids.to(img.device, dtype=img.dtype)
         txt = txt.to(img.device, dtype=img.dtype)
         txt_ids = txt_ids.to(img.device, dtype=img.dtype)
         vec = vec.to(img.device, dtype=img.dtype)
 
-        inps[ic]["img_ids"] = img_ids
         inps[ic]["txt"] = txt
         inps[ic]["txt_ids"] = txt_ids
         inps[ic]["vec"] = vec
@@ -607,53 +602,62 @@ def masked_denoise_controlnet(
         t_vec = torch.full((img.shape[0],), t_curr, dtype=img.dtype, device=img.device)
         guidance_vec = guidance_vec.to(img.device, dtype=img.dtype)
 
+        # for ic in range(len(inps)):
+        # txt = inps[ic]["txt"]
+        # txt_ids = inps[ic]["txt_ids"]
+        # vec = inps[ic]["vec"]
+        batched_txt = torch.stack(
+            [inps[ic]["txt"].squeeze() for ic in range(len(inps))], dim=0
+        )
+        batched_txt_ids = torch.stack(
+            [inps[ic]["txt_ids"].squeeze() for ic in range(len(inps))], dim=0
+        )
+        batched_vec = torch.stack(
+            [inps[ic]["vec"].squeeze() for ic in range(len(inps))], dim=0
+        )
+        batched_img_ids = torch.stack(
+            [img_ids for _ in range(len(inps))], dim=0
+        ).squeeze()  # should be the same for all
+        batched_img = torch.stack([img.squeeze() for _ in range(len(inps))], dim=0)
+
+        controlnet_hidden_states = None
+        for container in controlnets_container:
+            if container.controlnet_start_step <= i <= container.controlnet_end_step:
+                block_res_samples = container.controlnet(
+                    img=batched_img,
+                    img_ids=batched_img_ids,
+                    controlnet_cond=container.controlnet_cond,
+                    txt=batched_txt,
+                    txt_ids=batched_txt_ids,
+                    y=batched_vec,
+                    timesteps=t_vec,
+                    guidance=guidance_vec,
+                )
+                if controlnet_hidden_states is None:
+                    controlnet_hidden_states = [
+                        sample * container.controlnet_gs for sample in block_res_samples
+                    ]
+                else:
+                    if len(controlnet_hidden_states) == len(block_res_samples):
+                        for j in range(len(controlnet_hidden_states)):
+                            controlnet_hidden_states[j] += (
+                                block_res_samples[j] * container.controlnet_gs
+                            )
+
+        pred = model_forward(
+            model,
+            img=batched_img,
+            img_ids=batched_img_ids,
+            txt=batched_txt,
+            txt_ids=batched_txt_ids,
+            y=batched_vec,
+            timesteps=t_vec,
+            guidance=guidance_vec,
+            block_controlnet_hidden_states=controlnet_hidden_states,
+        )
+        # inps[ic]["img"] = pred
         for ic in range(len(inps)):
-            img_ids = inps[ic]["img_ids"]
-            txt = inps[ic]["txt"]
-            txt_ids = inps[ic]["txt_ids"]
-            vec = inps[ic]["vec"]
-
-            controlnet_hidden_states = None
-            for container in controlnets_container:
-                if (
-                    container.controlnet_start_step
-                    <= i
-                    <= container.controlnet_end_step
-                ):
-                    block_res_samples = container.controlnet(
-                        img=img,
-                        img_ids=img_ids,
-                        controlnet_cond=container.controlnet_cond,
-                        txt=txt,
-                        txt_ids=txt_ids,
-                        y=vec,
-                        timesteps=t_vec,
-                        guidance=guidance_vec,
-                    )
-                    if controlnet_hidden_states is None:
-                        controlnet_hidden_states = [
-                            sample * container.controlnet_gs
-                            for sample in block_res_samples
-                        ]
-                    else:
-                        if len(controlnet_hidden_states) == len(block_res_samples):
-                            for j in range(len(controlnet_hidden_states)):
-                                controlnet_hidden_states[j] += (
-                                    block_res_samples[j] * container.controlnet_gs
-                                )
-
-            pred = model_forward(
-                model,
-                img=img,
-                img_ids=img_ids,
-                txt=txt,
-                txt_ids=txt_ids,
-                y=vec,
-                timesteps=t_vec,
-                guidance=guidance_vec,
-                block_controlnet_hidden_states=controlnet_hidden_states,
-            )
-            inps[ic]["img"] = pred
+            inps[ic]["img"] = pred[ic]
 
         # Apply mask to the latents
         masked_pred = torch.zeros_like(img).to(img.device, dtype=img.dtype)
