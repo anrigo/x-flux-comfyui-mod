@@ -602,23 +602,25 @@ def masked_denoise_controlnet(
         t_vec = torch.full((img.shape[0],), t_curr, dtype=img.dtype, device=img.device)
         guidance_vec = guidance_vec.to(img.device, dtype=img.dtype)
 
-        # for ic in range(len(inps)):
-        # txt = inps[ic]["txt"]
-        # txt_ids = inps[ic]["txt_ids"]
-        # vec = inps[ic]["vec"]
-        batched_txt = torch.stack(
-            [inps[ic]["txt"].squeeze() for ic in range(len(inps))], dim=0
-        )
-        batched_txt_ids = torch.stack(
-            [inps[ic]["txt_ids"].squeeze() for ic in range(len(inps))], dim=0
-        )
-        batched_vec = torch.stack(
-            [inps[ic]["vec"].squeeze() for ic in range(len(inps))], dim=0
-        )
-        batched_img_ids = torch.stack(
-            [img_ids for _ in range(len(inps))], dim=0
-        ).squeeze()  # should be the same for all
-        batched_img = torch.stack([img.squeeze() for _ in range(len(inps))], dim=0)
+        # Stack inputs for batched inference
+        txt_list = [inps[ic]["txt"].squeeze() for ic in range(len(inps))]
+        txt_ids_list = [inps[ic]["txt_ids"].squeeze() for ic in range(len(inps))]
+        vec_list = [inps[ic]["vec"].squeeze() for ic in range(len(inps))]
+        img_ids_list = [img_ids for _ in range(len(inps))]  # should be the same for all
+        img_list = [img.squeeze() for _ in range(len(inps))]
+
+        if i >= timestep_to_start_cfg:
+            txt_list.append(neg_txt.squeeze())
+            txt_ids_list.append(neg_txt_ids.squeeze())
+            vec_list.append(neg_vec.squeeze())
+            img_ids_list.append(img_ids)  # should be the same for all
+            img_list.append(img.squeeze())
+
+        batched_txt = torch.stack(txt_list, dim=0)
+        batched_txt_ids = torch.stack(txt_ids_list, dim=0)
+        batched_vec = torch.stack(vec_list, dim=0)
+        batched_img_ids = torch.stack(img_ids_list, dim=0).squeeze()
+        batched_img = torch.stack(img_list, dim=0)
 
         controlnet_hidden_states = None
         for container in controlnets_container:
@@ -655,7 +657,8 @@ def masked_denoise_controlnet(
             guidance=guidance_vec,
             block_controlnet_hidden_states=controlnet_hidden_states,
         )
-        # inps[ic]["img"] = pred
+
+        # Unstack positive predictions
         for ic in range(len(inps)):
             inps[ic]["img"] = pred[ic]
 
@@ -669,50 +672,10 @@ def masked_denoise_controlnet(
 
         masked_pred /= counts
 
-        neg_controlnet_hidden_states = None
         if i >= timestep_to_start_cfg:
-            for container in controlnets_container:
-                if (
-                    container.controlnet_start_step
-                    <= i
-                    <= container.controlnet_end_step
-                ):
-                    neg_block_res_samples = container.controlnet(
-                        img=img,
-                        img_ids=img_ids,
-                        controlnet_cond=container.controlnet_cond,
-                        txt=neg_txt,
-                        txt_ids=neg_txt_ids,
-                        y=neg_vec,
-                        timesteps=t_vec,
-                        guidance=guidance_vec,
-                    )
-                    if neg_controlnet_hidden_states is None:
-                        neg_controlnet_hidden_states = [
-                            sample * container.controlnet_gs
-                            for sample in neg_block_res_samples
-                        ]
-                    else:
-                        if len(neg_controlnet_hidden_states) == len(
-                            neg_block_res_samples
-                        ):
-                            for j in range(len(neg_controlnet_hidden_states)):
-                                neg_controlnet_hidden_states[j] += (
-                                    neg_block_res_samples[j] * container.controlnet_gs
-                                )
+            # Unstack negative prediction
+            neg_pred = pred[-1]
 
-            neg_pred = model_forward(
-                model,
-                img=img,
-                img_ids=img_ids,
-                txt=neg_txt,
-                txt_ids=neg_txt_ids,
-                y=neg_vec,
-                timesteps=t_vec,
-                guidance=guidance_vec,
-                block_controlnet_hidden_states=neg_controlnet_hidden_states,
-                neg_mode=True,
-            )
             # cfg
             masked_pred = neg_pred + true_gs * (masked_pred - neg_pred)
 
