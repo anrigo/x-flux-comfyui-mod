@@ -5,6 +5,7 @@ import torch
 from einops import rearrange, repeat
 from torch import Tensor
 import numpy as np
+from itertools import batched
 
 # from .modules.conditioner import HFEmbedder
 from .layers import DoubleStreamMixerProcessor, timestep_embedding
@@ -550,6 +551,7 @@ def masked_denoise_controlnet(
     height=512,
     # controlnet_start_step=0,
     # controlnet_end_step=None
+    parallel_batch_size=None,
 ):
     i = 0
 
@@ -567,17 +569,9 @@ def masked_denoise_controlnet(
         img = t * img + (1.0 - t) * orig_image
 
     for ic in range(len(inps)):
-        txt = inps[ic]["txt"]
-        txt_ids = inps[ic]["txt_ids"]
-        vec = inps[ic]["vec"]
-
-        txt = txt.to(img.device, dtype=img.dtype)
-        txt_ids = txt_ids.to(img.device, dtype=img.dtype)
-        vec = vec.to(img.device, dtype=img.dtype)
-
-        inps[ic]["txt"] = txt
-        inps[ic]["txt_ids"] = txt_ids
-        inps[ic]["vec"] = vec
+        inps[ic]["txt"] = inps[ic]["txt"].to(img.device, dtype=img.dtype)
+        inps[ic]["txt_ids"] = inps[ic]["txt_ids"].to(img.device, dtype=img.dtype)
+        inps[ic]["vec"] = inps[ic]["vec"].to(img.device, dtype=img.dtype)
 
     masks = [inp["mask"].to(img.device, dtype=img.dtype) for inp in inps]
 
@@ -616,65 +610,83 @@ def masked_denoise_controlnet(
             img_ids_list.append(img_ids)  # should be the same for all
             img_list.append(img.squeeze())
 
-        batched_txt = torch.stack(txt_list, dim=0)
-        batched_txt_ids = torch.stack(txt_ids_list, dim=0)
-        batched_vec = torch.stack(vec_list, dim=0)
-        batched_img_ids = torch.stack(img_ids_list, dim=0).squeeze()
-        batched_img = torch.stack(img_list, dim=0)
+        if parallel_batch_size is None or parallel_batch_size <= 0:
+            parallel_batch_size = len(txt_list)
 
-        controlnet_hidden_states = None
-        for container in controlnets_container:
-            if container.controlnet_start_step <= i <= container.controlnet_end_step:
-                block_res_samples = container.controlnet(
-                    img=batched_img,
-                    img_ids=batched_img_ids,
-                    controlnet_cond=container.controlnet_cond,
-                    txt=batched_txt,
-                    txt_ids=batched_txt_ids,
-                    y=batched_vec,
-                    timesteps=t_vec,
-                    guidance=guidance_vec,
-                )
-                if controlnet_hidden_states is None:
-                    controlnet_hidden_states = [
-                        sample * container.controlnet_gs for sample in block_res_samples
-                    ]
-                else:
-                    if len(controlnet_hidden_states) == len(block_res_samples):
-                        for j in range(len(controlnet_hidden_states)):
-                            controlnet_hidden_states[j] += (
-                                block_res_samples[j] * container.controlnet_gs
-                            )
+        batch_idxs = list(range(len(txt_list)))
+        preds = []
 
-        pred = model_forward(
-            model,
-            img=batched_img,
-            img_ids=batched_img_ids,
-            txt=batched_txt,
-            txt_ids=batched_txt_ids,
-            y=batched_vec,
-            timesteps=t_vec,
-            guidance=guidance_vec,
-            block_controlnet_hidden_states=controlnet_hidden_states,
-        )
+        for batch_slice in batched(batch_idxs, parallel_batch_size):
+            batched_txt = torch.stack([txt_list[bidx] for bidx in batch_slice], dim=0)
+            batched_txt_ids = torch.stack(
+                [txt_ids_list[bidx] for bidx in batch_slice], dim=0
+            )
+            batched_vec = torch.stack([vec_list[bidx] for bidx in batch_slice], dim=0)
+            batched_img_ids = torch.stack(
+                [img_ids_list[bidx] for bidx in batch_slice], dim=0
+            ).squeeze()
+            batched_img = torch.stack([img_list[bidx] for bidx in batch_slice], dim=0)
 
-        # Unstack positive predictions
-        for ic in range(len(inps)):
-            inps[ic]["img"] = pred[ic]
+            if batched_img_ids.ndim != 3:
+                batched_img_ids = batched_img_ids.unsqueeze(0)
+
+            controlnet_hidden_states = None
+            for container in controlnets_container:
+                if (
+                    container.controlnet_start_step
+                    <= i
+                    <= container.controlnet_end_step
+                ):
+                    block_res_samples = container.controlnet(
+                        img=batched_img,
+                        img_ids=batched_img_ids,
+                        controlnet_cond=container.controlnet_cond,
+                        txt=batched_txt,
+                        txt_ids=batched_txt_ids,
+                        y=batched_vec,
+                        timesteps=t_vec,
+                        guidance=guidance_vec,
+                    )
+                    if controlnet_hidden_states is None:
+                        controlnet_hidden_states = [
+                            sample * container.controlnet_gs
+                            for sample in block_res_samples
+                        ]
+                    else:
+                        if len(controlnet_hidden_states) == len(block_res_samples):
+                            for j in range(len(controlnet_hidden_states)):
+                                controlnet_hidden_states[j] += (
+                                    block_res_samples[j] * container.controlnet_gs
+                                )
+
+            batch_pred = model_forward(
+                model,
+                img=batched_img,
+                img_ids=batched_img_ids,
+                txt=batched_txt,
+                txt_ids=batched_txt_ids,
+                y=batched_vec,
+                timesteps=t_vec,
+                guidance=guidance_vec,
+                block_controlnet_hidden_states=controlnet_hidden_states,
+            )
+
+            # Unstack batch predictions
+            preds.extend(batch_pred.unbind(0))
 
         # Apply mask to the latents
         masked_pred = torch.zeros_like(img).to(img.device, dtype=img.dtype)
         counts = (torch.ones_like(img) * 1e-37).to(img.device, dtype=img.dtype)
 
         for ic in range(len(inps)):
-            masked_pred += inps[ic]["img"] * masks[ic]
+            masked_pred += preds[ic] * masks[ic]
             counts += masks[ic]
 
         masked_pred /= counts
 
         if i >= timestep_to_start_cfg:
             # Unstack negative prediction
-            neg_pred = pred[-1]
+            neg_pred = preds[-1]
 
             # cfg
             masked_pred = neg_pred + true_gs * (masked_pred - neg_pred)
