@@ -1006,6 +1006,8 @@ class XlabsSamplerWithMask:
         x0_output = {}
         callback = latent_preview.prepare_callback(model, len(timesteps) - 1, x0_output)
 
+        containers = None
+
         if controlnet_condition is not None:
 
             def prepare_controlnet_condition(controlnet_condition):
@@ -1053,69 +1055,47 @@ class XlabsSamplerWithMask:
             )
             # mm.load_model_gpu(controlnet)
 
-            total_steps = len(timesteps)
+            # total_steps = len(timesteps)
 
-            x = masked_denoise_controlnet(
-                inmodel.diffusion_model,
-                inps=inp_conds,
-                controlnets_container=containers,
-                timesteps=timesteps,
-                guidance=guidance,
-                # controlnet_cond=controlnet_image,
-                timestep_to_start_cfg=timestep_to_start_cfg,
-                neg_txt=neg_inp_cond["txt"],
-                neg_txt_ids=neg_inp_cond["txt_ids"],
-                neg_vec=neg_inp_cond["vec"],
-                true_gs=true_gs,
-                # controlnet_gs=controlnet_strength,
-                image2image_strength=image_to_image_strength,
-                orig_image=orig_x,
-                callback=callback,
-                width=width,
-                height=height,
-                # controlnet_start_step=start_step,
-                # controlnet_end_step=end_step
-                parallel_batch_size=parallel_bs,
-            )
-
-            # inp_cond = inp_conds[0]
-            # x = denoise_controlnet(
-            #     inmodel.diffusion_model, **inp_cond,
-            #     controlnets_container=containers,
-            #     timesteps=timesteps, guidance=guidance,
-            #     #controlnet_cond=controlnet_image,
-            #     timestep_to_start_cfg=timestep_to_start_cfg,
-            #     neg_txt=neg_inp_cond['txt'],
-            #     neg_txt_ids=neg_inp_cond['txt_ids'],
-            #     neg_vec=neg_inp_cond['vec'],
-            #     true_gs=true_gs,
-            #     #controlnet_gs=controlnet_strength,
-            #     image2image_strength=image_to_image_strength,
-            #     orig_image=orig_x,
-            #     callback=callback,
-            #     width=width,
-            #     height=height,
-            #     #controlnet_start_step=start_step,
-            #     #controlnet_end_step=end_step
-            # )
-            # controlnet.to(offload_device)
-        else:
-            x = masked_denoise(
-                inmodel.diffusion_model,
-                inp_conds,
-                timesteps=timesteps,
-                guidance=guidance,
-                timestep_to_start_cfg=timestep_to_start_cfg,
-                neg_txt=neg_inp_cond["txt"],
-                neg_txt_ids=neg_inp_cond["txt_ids"],
-                neg_vec=neg_inp_cond["vec"],
-                true_gs=true_gs,
-                image2image_strength=image_to_image_strength,
-                orig_image=orig_x,
-                callback=callback,
-                width=width,
-                height=height,
-            )
+        x = masked_denoise_controlnet(
+            inmodel.diffusion_model,
+            inps=inp_conds,
+            controlnets_container=containers,
+            timesteps=timesteps,
+            guidance=guidance,
+            # controlnet_cond=controlnet_image,
+            timestep_to_start_cfg=timestep_to_start_cfg,
+            neg_txt=neg_inp_cond["txt"],
+            neg_txt_ids=neg_inp_cond["txt_ids"],
+            neg_vec=neg_inp_cond["vec"],
+            true_gs=true_gs,
+            # controlnet_gs=controlnet_strength,
+            image2image_strength=image_to_image_strength,
+            orig_image=orig_x,
+            callback=callback,
+            width=width,
+            height=height,
+            # controlnet_start_step=start_step,
+            # controlnet_end_step=end_step
+            parallel_batch_size=parallel_bs,
+        )
+        # else:
+        #     x = masked_denoise(
+        #         inmodel.diffusion_model,
+        #         inp_conds,
+        #         timesteps=timesteps,
+        #         guidance=guidance,
+        #         timestep_to_start_cfg=timestep_to_start_cfg,
+        #         neg_txt=neg_inp_cond["txt"],
+        #         neg_txt_ids=neg_inp_cond["txt_ids"],
+        #         neg_vec=neg_inp_cond["vec"],
+        #         true_gs=true_gs,
+        #         image2image_strength=image_to_image_strength,
+        #         orig_image=orig_x,
+        #         callback=callback,
+        #         width=width,
+        #         height=height,
+        #     )
 
         x = unpack(x, height, width)
         lat_processor = LATENT_PROCESSOR_COMFY()

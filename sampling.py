@@ -400,135 +400,6 @@ def denoise_controlnet(
     return img
 
 
-def masked_denoise(
-    model,
-    # model input
-    inps: list[dict[str, Tensor]],
-    neg_txt: Tensor,
-    neg_txt_ids: Tensor,
-    neg_vec: Tensor,
-    # sampling parameters
-    timesteps: list[float],
-    guidance: float = 4.0,
-    true_gs=1,
-    timestep_to_start_cfg=0,
-    image2image_strength=None,
-    orig_image=None,
-    callback=None,
-    width=512,
-    height=512,
-):
-    i = 0
-
-    img = inps[0]["img"]
-
-    # init_latents = rearrange(init_latents, "b c (h ph) (w pw) -> b (h w) (c ph pw)", ph=2, pw=2)
-    if image2image_strength is not None and orig_image is not None:
-        t_idx = np.clip(
-            int((1 - np.clip(image2image_strength, 0.0, 1.0)) * len(timesteps)),
-            0,
-            len(timesteps) - 1,
-        )
-        t = timesteps[t_idx]
-        timesteps = timesteps[t_idx:]
-        orig_image = rearrange(
-            orig_image, "b c (h ph) (w pw) -> b (h w) (c ph pw)", ph=2, pw=2
-        ).to(img.device, dtype=img.dtype)
-
-        for ic in range(len(inps)):
-            img = inps[ic]["img"]
-            img = t * img + (1.0 - t) * orig_image
-            inps[ic]["img"] = img
-
-    for ic in range(len(inps)):
-        img_ids = inps[ic]["img_ids"]
-        txt = inps[ic]["txt"]
-        txt_ids = inps[ic]["txt_ids"]
-        vec = inps[ic]["vec"]
-
-        img_ids = img_ids.to(img.device, dtype=img.dtype)
-        txt = txt.to(img.device, dtype=img.dtype)
-        txt_ids = txt_ids.to(img.device, dtype=img.dtype)
-        vec = vec.to(img.device, dtype=img.dtype)
-
-        inps[ic]["img_ids"] = img_ids
-        inps[ic]["txt"] = txt
-        inps[ic]["txt_ids"] = txt_ids
-        inps[ic]["vec"] = vec
-
-    masks = [inp["mask"].to(img.device, dtype=img.dtype) for inp in inps]
-
-    if hasattr(model, "guidance_in"):
-        guidance_vec = torch.full(
-            (img.shape[0],), guidance, device=img.device, dtype=img.dtype
-        )
-    else:
-        # this is ignored for schnell
-        guidance_vec = None
-
-    for t_curr, t_prev in tqdm(
-        zip(timesteps[:-1], timesteps[1:]), desc="Sampling", total=len(timesteps) - 1
-    ):
-        t_vec = torch.full((img.shape[0],), t_curr, dtype=img.dtype, device=img.device)
-
-        for ic in range(len(inps)):
-            # for ic in (0,):
-            # img = inps[ic]["img"]
-            img_ids = inps[ic]["img_ids"]
-            txt = inps[ic]["txt"]
-            txt_ids = inps[ic]["txt_ids"]
-            vec = inps[ic]["vec"]
-
-            pred = model_forward(
-                model,
-                img=img,
-                img_ids=img_ids,
-                txt=txt,
-                txt_ids=txt_ids,
-                y=vec,
-                timesteps=t_vec,
-                guidance=guidance_vec,
-            )
-            inps[ic]["img"] = pred
-
-        # Apply mask to the latents
-        masked_pred = torch.zeros_like(img).to(img.device, dtype=img.dtype)
-        counts = (torch.ones_like(img) * 1e-37).to(img.device, dtype=img.dtype)
-
-        for ic in range(len(inps)):
-            masked_pred += inps[ic]["img"] * masks[ic]
-            counts += masks[ic]
-
-        masked_pred /= counts
-
-        if i >= timestep_to_start_cfg:
-            neg_pred = model_forward(
-                model,
-                img=img,
-                img_ids=img_ids,
-                txt=neg_txt,
-                txt_ids=neg_txt_ids,
-                y=neg_vec,
-                timesteps=t_vec,
-                guidance=guidance_vec,
-                neg_mode=True,
-            )
-            # neg_pred = torch.zeros_like(masked_pred).to(img.device, dtype=img.dtype)
-            # neg_pred /= torch.ones_like(x_in) * 1e-37
-            # cfg
-            masked_pred = neg_pred + true_gs * (masked_pred - neg_pred)
-
-        # denoising step
-        img = img + (t_prev - t_curr) * masked_pred
-
-        if callback is not None:
-            unpacked = unpack(img.float(), height, width)
-            callback(step=i, x=img, x0=unpacked, total_steps=len(timesteps) - 1)
-        i += 1
-
-    return img
-
-
 def masked_denoise_controlnet(
     model,
     controlnets_container: List[ControlNetContainer],
@@ -575,13 +446,14 @@ def masked_denoise_controlnet(
 
     masks = [inp["mask"].to(img.device, dtype=img.dtype) for inp in inps]
 
-    for container in controlnets_container:
-        container.controlnet_cond = container.controlnet_cond.to(
-            img.device, dtype=img.dtype
-        )
-        container.controlnet.to(img.device, dtype=img.dtype)
-    # controlnet.to(img.device, dtype=img.dtype)
-    # controlnet_cond = controlnet_cond.to(img.device, dtype=img.dtype)
+    if controlnets_container is not None:
+        for container in controlnets_container:
+            container.controlnet_cond = container.controlnet_cond.to(
+                img.device, dtype=img.dtype
+            )
+            container.controlnet.to(img.device, dtype=img.dtype)
+    else:
+        controlnets_container = []
 
     if hasattr(model, "guidance_in"):
         guidance_vec = torch.full(
