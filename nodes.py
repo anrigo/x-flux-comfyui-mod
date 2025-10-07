@@ -96,7 +96,6 @@ from .sampling import (
     get_schedule,
     denoise,
     denoise_controlnet,
-    masked_denoise,
     masked_denoise_controlnet,
     unpack,
 )
@@ -1079,23 +1078,6 @@ class XlabsSamplerWithMask:
             # controlnet_end_step=end_step
             parallel_batch_size=parallel_bs,
         )
-        # else:
-        #     x = masked_denoise(
-        #         inmodel.diffusion_model,
-        #         inp_conds,
-        #         timesteps=timesteps,
-        #         guidance=guidance,
-        #         timestep_to_start_cfg=timestep_to_start_cfg,
-        #         neg_txt=neg_inp_cond["txt"],
-        #         neg_txt_ids=neg_inp_cond["txt_ids"],
-        #         neg_vec=neg_inp_cond["vec"],
-        #         true_gs=true_gs,
-        #         image2image_strength=image_to_image_strength,
-        #         orig_image=orig_x,
-        #         callback=callback,
-        #         width=width,
-        #         height=height,
-        #     )
 
         x = unpack(x, height, width)
         lat_processor = LATENT_PROCESSOR_COMFY()
